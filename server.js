@@ -2,14 +2,16 @@ const express = require('express');
 const { Document, Packer, Paragraph, TextRun, Header, Footer, AlignmentType, ImageRun, BorderStyle } = require('docx');
 const fs = require('fs');
 const path = require('path');
+const JSZip = require('jszip');
 
 const app = express();
-app.use(express.json({ limit: '50mb' })); // Увеличил лимит для больших текстов
+app.use(express.json({ limit: '50mb' }));
 
 // Константы
-const CHARS_PER_PAGE = 2000; // Количество символов на страницу
+const CHARS_PER_PAGE = 2000;
+const BROWN_COLOR = "9b6c4b";
 
-// Разделяем текст на страницы
+// Разделяем текст на страницы с сохранением целостности заданий
 function splitTextIntoPages(text) {
     if (!text || text.length === 0) return [];
 
@@ -17,62 +19,112 @@ function splitTextIntoPages(text) {
     let remainingText = text;
     let pageCount = 0;
 
-    console.log('📄 Разбиение текста на страницы...');
+    console.log('📄 Разбиение текста на страницы с сохранением заданий...');
 
-    while (remainingText.length > 0) {
-        pageCount++;
+    // Разбиваем текст на блоки по заданиям (каждое задание начинается с "ЗАДАНИЕ")
+    const taskBlocks = text.split(/(?=ЗАДАНИЕ \d+)/);
 
-        if (remainingText.length <= CHARS_PER_PAGE) {
-            pages.push(remainingText);
-            console.log(`   Страница ${pageCount}: ${remainingText.length} символов`);
-            break;
+    let currentPage = '';
+
+    taskBlocks.forEach(block => {
+        // Если блок пустой, пропускаем
+        if (!block.trim()) return;
+
+        // Если текущая страница + новый блок не превышают лимит
+        if ((currentPage.length + block.length) <= CHARS_PER_PAGE) {
+            currentPage += block;
+        } else {
+            // Если текущая страница не пустая, сохраняем её
+            if (currentPage.trim()) {
+                pages.push(currentPage.trim());
+                console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
+                currentPage = '';
+            }
+
+            // Если блок сам по себе больше страницы, разбиваем его принудительно
+            if (block.length > CHARS_PER_PAGE) {
+                // Разбиваем большой блок на части
+                let remainingBlock = block;
+                while (remainingBlock.length > 0) {
+                    if (remainingBlock.length <= CHARS_PER_PAGE) {
+                        if (currentPage) {
+                            pages.push(currentPage.trim());
+                            console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
+                            currentPage = '';
+                        }
+                        pages.push(remainingBlock.trim());
+                        console.log(`   Страница ${pages.length}: ${remainingBlock.length} символов`);
+                        break;
+                    } else {
+                        // Ищем хорошее место для разрыва внутри блока
+                        let chunk = remainingBlock.substring(0, CHARS_PER_PAGE);
+                        let splitPoint = findSplitPoint(chunk);
+
+                        const pageText = remainingBlock.substring(0, splitPoint).trim();
+                        if (currentPage) {
+                            pages.push(currentPage.trim());
+                            console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
+                            currentPage = '';
+                        }
+                        pages.push(pageText);
+                        console.log(`   Страница ${pages.length}: ${pageText.length} символов`);
+
+                        remainingBlock = remainingBlock.substring(splitPoint).trim();
+                    }
+                }
+            } else {
+                // Начинаем новую страницу с этого блока
+                currentPage = block;
+            }
         }
+    });
 
-        // Ищем хорошее место для разрыва
-        let chunk = remainingText.substring(0, CHARS_PER_PAGE);
-        let splitPoint = -1;
-
-        // Ищем последнюю точку с запятой
-        let lastSemicolon = chunk.lastIndexOf(';');
-        if (lastSemicolon > CHARS_PER_PAGE * 0.5) splitPoint = lastSemicolon + 1;
-
-        // Ищем последнюю точку
-        if (splitPoint === -1) {
-            let lastPeriod = chunk.lastIndexOf('.');
-            if (lastPeriod > CHARS_PER_PAGE * 0.5) splitPoint = lastPeriod + 1;
-        }
-
-        // Ищем последний перевод строки
-        if (splitPoint === -1) {
-            let lastNewLine = chunk.lastIndexOf('\n');
-            if (lastNewLine > CHARS_PER_PAGE * 0.5) splitPoint = lastNewLine + 1;
-        }
-
-        // Ищем последний пробел
-        if (splitPoint === -1) {
-            let lastSpace = chunk.lastIndexOf(' ');
-            if (lastSpace > CHARS_PER_PAGE * 0.5) splitPoint = lastSpace + 1;
-        }
-
-        // Если ничего не нашли, режем по середине
-        if (splitPoint === -1) {
-            splitPoint = Math.floor(CHARS_PER_PAGE * 0.8);
-        }
-
-        const pageText = remainingText.substring(0, splitPoint).trim();
-        pages.push(pageText);
-        console.log(`   Страница ${pageCount}: ${pageText.length} символов`);
-
-        remainingText = remainingText.substring(splitPoint).trim();
+    // Добавляем последнюю страницу
+    if (currentPage.trim()) {
+        pages.push(currentPage.trim());
+        console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
     }
 
     console.log(`✅ Всего создано страниц: ${pages.length}`);
     return pages;
 }
 
-// Функция для создания колонтитулов
-function createHeaderAndFooter(pageNumber, totalPages) {
-    // Верхний колонтитул - ЛОГОТИП СЛЕВА
+// Поиск места для разрыва
+function findSplitPoint(chunk) {
+    let splitPoint = -1;
+
+    // Ищем последнюю точку с запятой
+    let lastSemicolon = chunk.lastIndexOf(';');
+    if (lastSemicolon > CHARS_PER_PAGE * 0.5) splitPoint = lastSemicolon + 1;
+
+    // Ищем последнюю точку
+    if (splitPoint === -1) {
+        let lastPeriod = chunk.lastIndexOf('.');
+        if (lastPeriod > CHARS_PER_PAGE * 0.5) splitPoint = lastPeriod + 1;
+    }
+
+    // Ищем последний перевод строки
+    if (splitPoint === -1) {
+        let lastNewLine = chunk.lastIndexOf('\n');
+        if (lastNewLine > CHARS_PER_PAGE * 0.5) splitPoint = lastNewLine + 1;
+    }
+
+    // Ищем последний пробел
+    if (splitPoint === -1) {
+        let lastSpace = chunk.lastIndexOf(' ');
+        if (lastSpace > CHARS_PER_PAGE * 0.5) splitPoint = lastSpace + 1;
+    }
+
+    // Если ничего не нашли, режем по середине
+    if (splitPoint === -1) {
+        splitPoint = Math.floor(CHARS_PER_PAGE * 0.8);
+    }
+
+    return splitPoint;
+}
+
+// Функция для создания колонтитулов - ПРОСТАЯ НУМЕРАЦИЯ
+function createHeaderAndFooter(pageNumber, totalPages, docType = 'tasks') {
     const header = new Header({
         children: [
             new Paragraph({
@@ -91,7 +143,7 @@ function createHeaderAndFooter(pageNumber, totalPages) {
                 spacing: { after: 120 },
                 border: {
                     bottom: {
-                        color: "9b6c4b",
+                        color: BROWN_COLOR,
                         space: 4,
                         style: BorderStyle.SINGLE,
                         size: 2,
@@ -101,7 +153,10 @@ function createHeaderAndFooter(pageNumber, totalPages) {
         ],
     });
 
-    // Нижний колонтитул
+    const footerText = docType === 'tasks'
+        ? 'Документ с заданиями создан с помощью платформы TUTHELP.ru'
+        : 'Документ с ответами создан с помощью платформы TUTHELP.ru';
+
     const footer = new Footer({
         children: [
             new Paragraph({
@@ -110,9 +165,10 @@ function createHeaderAndFooter(pageNumber, totalPages) {
                         text: `${pageNumber}`,
                         bold: true,
                         size: 24,
+                        color: BROWN_COLOR,
                     }),
                     new TextRun({
-                        text: `\t\t\t\t\t\t\t\tДокумент создан с помощью платформы TUTHELP.ru`,
+                        text: `\t\t\t\t\t\t\t\t${footerText}`,
                         bold: false,
                         size: 20,
                         color: "666666",
@@ -121,7 +177,7 @@ function createHeaderAndFooter(pageNumber, totalPages) {
                 alignment: AlignmentType.LEFT,
                 border: {
                     top: {
-                        color: "9b6c4b",
+                        color: BROWN_COLOR,
                         space: 4,
                         style: BorderStyle.SINGLE,
                         size: 2,
@@ -135,78 +191,431 @@ function createHeaderAndFooter(pageNumber, totalPages) {
     return { header, footer };
 }
 
+// Tool 3: Fill in the Gap
+function formatFillGap(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nЗАДАНИЕ:\n`;
+
+    const text = task.task?.text || '';
+
+    if (includeAnswers && task.answers) {
+        // Заполняем пропуски ответами
+        let filledText = text;
+        if (Array.isArray(task.answers)) {
+            task.answers.forEach(answer => {
+                const match = answer.match(/^(\d+)\s+(.+)$/);
+                if (match) {
+                    const number = match[1];
+                    const correctAnswer = match[2];
+                    const pattern = `(${number}) ______`;
+                    const replacement = `(${number}) ${correctAnswer}`;
+                    filledText = filledText.replace(new RegExp(pattern, 'g'), replacement);
+                }
+            });
+        }
+        taskText += `${filledText}\n`;
+    } else {
+        taskText += `${text}\n`;
+    }
+
+    // Банк слов
+    const wordBank = task.task?.wordBank || [];
+    if (wordBank.length > 0) {
+        taskText += `\nБанк слов:\n`;
+        wordBank.forEach((word, i) => {
+            taskText += `   ${i + 1}. ${word}\n`;
+        });
+    }
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ОТВЕТЫ:\n`;
+        task.answers.forEach(answer => {
+            taskText += `   • ${answer}\n`;
+        });
+    } else {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `ОТВЕТ: ____________________\n`;
+    }
+
+    return taskText;
+}
+
+// Tool 17: Interesting Facts
+function formatInterestingFacts(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nИНТЕРЕСНЫЕ ФАКТЫ:\n`;
+
+    const facts = task.task?.facts || [];
+    facts.forEach((fact, i) => {
+        taskText += `\n${i + 1}. ${fact}\n`;
+    });
+
+    return taskText;
+}
+
+// Tool 23: Text with Vocabulary
+function formatTextWithVocabulary(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nТЕКСТ:\n`;
+    taskText += `${task.task?.text || ''}\n`;
+
+    const vocabulary = task.task?.vocabulary_used || [];
+    if (vocabulary.length > 0) {
+        taskText += `\n📖 ИСПОЛЬЗУЕМАЯ ЛЕКСИКА:\n`;
+        vocabulary.forEach((word, i) => {
+            taskText += `   ${i + 1}. ${word}\n`;
+        });
+    }
+
+    return taskText;
+}
+
+// Tool 19: Matching Halves
+function formatMatchingHalves(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nЗАДАНИЕ:\n\n`;
+
+    const left = task.task?.left || [];
+    const right = task.task?.right || [];
+
+    taskText += `ЛЕВАЯ ЧАСТЬ:\n`;
+    left.forEach(item => taskText += `${item}\n`);
+
+    taskText += `\nПРАВАЯ ЧАСТЬ:\n`;
+    right.forEach(item => taskText += `${item}\n`);
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ПРАВИЛЬНЫЕ ПАРЫ:\n`;
+        task.answers.forEach(answer => {
+            taskText += `   • ${answer}\n`;
+        });
+    } else {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `ОТВЕТ: ____________________\n`;
+    }
+
+    return taskText;
+}
+
+// Tool 24: Scramble Sentences
+function formatScrambleSentences(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nЗАДАНИЕ: Составьте предложения из слов\n\n`;
+
+    const scrambled = task.task?.scrambled || [];
+    scrambled.forEach((sentence, i) => {
+        taskText += `${sentence}\n\n`;
+    });
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ПРАВИЛЬНЫЕ ПРЕДЛОЖЕНИЯ:\n`;
+        task.answers.forEach(answer => {
+            taskText += `   • ${answer}\n`;
+        });
+    } else {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `ОТВЕТ: ____________________\n`;
+    }
+
+    return taskText;
+}
+
+// Универсальная функция форматирования задания по tool_id
+function formatTaskByTool(task, index, includeAnswers = false) {
+    const toolId = task.tool_id;
+
+    switch (toolId) {
+        case 3: // Fill in the Gap
+            return formatFillGap(task, index, includeAnswers);
+
+        case 17: // Interesting Facts
+            return formatInterestingFacts(task, index, includeAnswers);
+
+        case 19: // Matching Halves
+            return formatMatchingHalves(task, index, includeAnswers);
+
+        case 23: // Text with Vocabulary
+            return formatTextWithVocabulary(task, index, includeAnswers);
+
+        case 24: // Scramble Sentences
+            return formatScrambleSentences(task, index, includeAnswers);
+
+        default:
+            return formatGenericTask(task, index, includeAnswers);
+    }
+}
+
+// Универсальный формат для неизвестных типов
+function formatGenericTask(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nЗАДАНИЕ:\n`;
+    taskText += `${JSON.stringify(task.task, null, 2)}\n`;
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ОТВЕТЫ:\n`;
+        if (Array.isArray(task.answers)) {
+            task.answers.forEach(answer => {
+                taskText += `   • ${answer}\n`;
+            });
+        } else {
+            taskText += `   ${JSON.stringify(task.answers)}\n`;
+        }
+    } else if (!includeAnswers) {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `ОТВЕТ: ____________________\n`;
+    }
+
+    return taskText;
+}
+
+// Генерация текста для документа с заданиями
+function generateTasksText(data) {
+    let fullText = '';
+
+    // Заголовок группы
+    if (data.group_title) {
+        fullText += `${data.group_title}\n`;
+        fullText += `${'═'.repeat(data.group_title.length)}\n\n`;
+    }
+
+    // Задания
+    if (data.tasks && Array.isArray(data.tasks)) {
+        data.tasks.forEach((task, index) => {
+            fullText += formatTaskByTool(task, index, false);
+            if (index < data.tasks.length - 1) {
+                fullText += `\n${'─'.repeat(60)}\n`;
+            }
+        });
+    }
+
+    return fullText;
+}
+
+// Генерация текста для документа с ответами
+function generateAnswersText(data) {
+    let fullText = '';
+
+    // Заголовок группы
+    if (data.group_title) {
+        fullText += `${data.group_title} - ОТВЕТЫ\n`;
+        fullText += `${'═'.repeat(data.group_title.length + 8)}\n\n`;
+    }
+
+    // Задания с ответами
+    if (data.tasks && Array.isArray(data.tasks)) {
+        data.tasks.forEach((task, index) => {
+            fullText += formatTaskByTool(task, index, true);
+            if (index < data.tasks.length - 1) {
+                fullText += `\n${'─'.repeat(60)}\n`;
+            }
+        });
+    }
+
+    return fullText;
+}
+
 // Преобразование текста в параграфы Word
-function textToParagraphs(text) {
+function textToParagraphs(text, isAnswers = false) {
     if (!text) return [new Paragraph({ children: [new TextRun("")] })];
 
     return text.split('\n').map(line => {
-        if (line.trim() === '---') {
-            return new Paragraph({
-                children: [new TextRun({
-                    text: '───────────────────────────────────────',
-                    bold: true,
-                })],
-                alignment: AlignmentType.CENTER,
-                spacing: { before: 300, after: 300 },
-            });
-        }
-
-        if (line.includes('LESSON') || line.includes('═══════════════')) {
+        // Заголовок группы
+        if (line.match(/^[A-Za-zА-Яа-я\s-]+$/) && line.length < 60 && !line.includes('•') && !line.includes('═') && !line.includes('ОТВЕТЫ')) {
             return new Paragraph({
                 children: [new TextRun({
                     text: line,
                     bold: true,
-                    size: 32,
-                    color: "1F4E8C",
+                    size: 36,
+                    color: BROWN_COLOR,
                 })],
                 spacing: { before: 400, after: 200 },
                 alignment: AlignmentType.CENTER,
             });
         }
 
-        if (line.includes('EXERCISE')) {
+        // Заголовок с ОТВЕТЫ
+        if (line.includes('ОТВЕТЫ')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    bold: true,
+                    size: 32,
+                    color: BROWN_COLOR,
+                })],
+                spacing: { before: 400, after: 200 },
+                alignment: AlignmentType.CENTER,
+            });
+        }
+
+        // Линия из символов ═
+        if (line.includes('═'.repeat(10))) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    bold: true,
+                    color: BROWN_COLOR,
+                })],
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 200, after: 200 },
+            });
+        }
+
+        // Линия из символов ─
+        if (line.includes('─'.repeat(10))) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    color: "999999",
+                })],
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 150, after: 150 },
+            });
+        }
+
+        // Заголовок ЗАДАНИЕ
+        if (line.includes('ЗАДАНИЕ')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    bold: true,
+                    size: 32,
+                    color: BROWN_COLOR,
+                })],
+                spacing: { before: 400, after: 100 },
+            });
+        }
+
+        // Заголовки секций
+        if (line.includes('ИНСТРУКЦИЯ:') || line.includes('ЗАДАНИЕ:') ||
+            line.includes('✅ ОТВЕТЫ:') || line.includes('✅ ПРАВИЛЬНЫЕ ПАРЫ:') ||
+            line.includes('✅ ПРАВИЛЬНЫЕ ПРЕДЛОЖЕНИЯ:')) {
             return new Paragraph({
                 children: [new TextRun({
                     text: line,
                     bold: true,
                     size: 28,
-                    color: "2E75B6",
+                    color: BROWN_COLOR,
                 })],
-                spacing: { before: 300, after: 150 },
+                spacing: { before: 200, after: 100 },
             });
         }
 
-        if (line.match(/^\d+\./)) {
+        // Специальные заголовки
+        if (line.includes('ИНТЕРЕСНЫЕ ФАКТЫ:') || line.includes('📖 ИСПОЛЬЗУЕМАЯ ЛЕКСИКА:') ||
+            line.includes('ЛЕВАЯ ЧАСТЬ:') || line.includes('ПРАВАЯ ЧАСТЬ:')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    bold: true,
+                    size: 26,
+                    color: BROWN_COLOR,
+                })],
+                spacing: { before: 150, after: 50 },
+            });
+        }
+
+        // Банк слов
+        if (line.includes('Банк слов:')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    italics: true,
+                    size: 24,
+                    color: "666666",
+                })],
+                spacing: { before: 150, after: 50 },
+            });
+        }
+
+        // Нумерованные пункты
+        if (line.match(/^\s*\d+\./)) {
             return new Paragraph({
                 children: [new TextRun({
                     text: line,
                     size: 24,
                 })],
                 indent: { left: 360 },
-                spacing: { before: 60, after: 40 },
-            });
-        }
-
-        if (line.trim().startsWith('   ')) {
-            return new Paragraph({
-                children: [new TextRun({
-                    text: line,
-                    italics: true,
-                    size: 22,
-                    color: "5A5A5A",
-                })],
-                indent: { left: 720 },
                 spacing: { before: 20, after: 20 },
             });
         }
 
+        // Ответы с буллетами
+        if (line.trim().startsWith('•')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    size: 24,
+                    color: isAnswers ? "2E7D32" : "444444",
+                    bold: isAnswers,
+                })],
+                indent: { left: 360 },
+                spacing: { before: 10, after: 10 },
+            });
+        }
+
+        // Текст с подставленными ответами
+        if (line.includes('(') && line.includes(')') && isAnswers) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    size: 24,
+                })],
+                spacing: { before: 60, after: 60 },
+            });
+        }
+
+        // Место для ответа
+        if (line.includes('ОТВЕТ: ____________________') && !isAnswers) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    size: 24,
+                    color: "999999",
+                    italics: true,
+                })],
+                spacing: { before: 30, after: 30 },
+                indent: { left: 360 },
+            });
+        }
+
+        // Обычный текст
         if (line.trim()) {
             return new Paragraph({
                 children: [new TextRun({
                     text: line,
                     size: 24,
                 })],
-                spacing: { before: 80, after: 80 },
+                spacing: { before: 60, after: 60 },
             });
         }
 
@@ -216,9 +625,9 @@ function textToParagraphs(text) {
     });
 }
 
-// Генерация Word документа из текста
-async function generateWordDocument(text, metadata = {}) {
-    console.log('\n📝 Создание документа из полученного текста...');
+// Генерация Word документа
+async function generateWordDocument(text, title, docType = 'tasks') {
+    console.log(`\n📝 Создание документа (${docType})...`);
 
     const pages = splitTextIntoPages(text);
     const totalPages = pages.length;
@@ -227,8 +636,8 @@ async function generateWordDocument(text, metadata = {}) {
         const pageNumber = index + 1;
         console.log(`   Создание страницы ${pageNumber} из ${totalPages}...`);
 
-        const { header, footer } = createHeaderAndFooter(pageNumber, totalPages);
-        const paragraphs = textToParagraphs(pageText);
+        const { header, footer } = createHeaderAndFooter(pageNumber, totalPages, docType);
+        const paragraphs = textToParagraphs(pageText, docType === 'answers');
 
         return {
             properties: {
@@ -253,349 +662,187 @@ async function generateWordDocument(text, metadata = {}) {
     const doc = new Document({
         sections: sections,
         properties: {
-            title: metadata.title || "TUTHELP Учебные материалы",
-            subject: metadata.subject || "Английский язык",
+            title: title,
+            subject: "Английский язык",
             creator: "TUTHELP.ru",
-            description: metadata.description || "Учебные материалы по английскому языку",
         },
     });
 
     return await Packer.toBuffer(doc);
 }
 
-// API endpoint для генерации документа из JSON
+// Создание ZIP архива
+async function createZipWithDocuments(tasksBuffer, answersBuffer) {
+    const zip = new JSZip();
+    zip.file("tasks.docx", tasksBuffer);
+    zip.file("answers.docx", answersBuffer);
+    return await zip.generateAsync({ type: "nodebuffer" });
+}
+
+// API endpoint
 app.post('/api/generate-word', async (req, res) => {
     try {
-        console.log('\n📄 НАЧАЛО ГЕНЕРАЦИИ ДОКУМЕНТА ИЗ JSON');
+        console.log('\n📄 НАЧАЛО ГЕНЕРАЦИИ ДВУХ ДОКУМЕНТОВ');
         console.log('='.repeat(60));
 
-        const { text, metadata, filename } = req.body;
+        const jsonData = req.body;
 
-        // Проверка наличия текста
-        if (!text) {
+        if (!jsonData) {
             return res.status(400).json({
-                error: 'Текст не предоставлен',
-                message: 'Пожалуйста, укажите текст в поле "text"'
+                error: 'Данные не предоставлены',
+                message: 'Пожалуйста, отправьте JSON с заданиями'
             });
         }
 
-        console.log(`📊 Получен текст длиной: ${text.length} символов`);
-        if (metadata) {
-            console.log(`📋 Метаданные:`, metadata);
-        }
+        console.log(`📋 Группа: ${jsonData.group_title || 'Без названия'}`);
+        console.log(`📊 Заданий: ${jsonData.tasks?.length || 0}`);
 
-        // Генерация документа
-        const buffer = await generateWordDocument(text, metadata);
+        // Генерация текста
+        const tasksText = generateTasksText(jsonData);
+        const answersText = generateAnswersText(jsonData);
 
-        // Создание папок если нужно
+        // Генерация документов
+        const tasksBuffer = await generateWordDocument(
+            tasksText,
+            jsonData.group_title || "Задания",
+            'tasks'
+        );
+
+        const answersBuffer = await generateWordDocument(
+            answersText,
+            `${jsonData.group_title || "Задания"} - ОТВЕТЫ`,
+            'answers'
+        );
+
+        // Сохранение
         if (!fs.existsSync('./output')) fs.mkdirSync('./output');
-        if (!fs.existsSync('./templates')) fs.mkdirSync('./templates');
 
-        // Сохранение файла
-        const outputFilename = filename || `tuthelp_${Date.now()}.docx`;
-        const outputPath = path.join(__dirname, 'output', outputFilename);
-        fs.writeFileSync(outputPath, buffer);
+        const timestamp = Date.now();
+        fs.writeFileSync(`./output/tasks_${timestamp}.docx`, tasksBuffer);
+        fs.writeFileSync(`./output/answers_${timestamp}.docx`, answersBuffer);
 
-        console.log('='.repeat(60));
-        console.log(`✅ Документ сохранен: ${outputPath}`);
-        console.log('='.repeat(60));
+        // ZIP
+        const zipBuffer = await createZipWithDocuments(tasksBuffer, answersBuffer);
 
-        // Отправка файла
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-        res.setHeader('Content-Disposition', `attachment; filename=${outputFilename}`);
-        res.send(buffer);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename=tuthelp_${timestamp}.zip`);
+        res.send(zipBuffer);
 
     } catch (error) {
         console.error('❌ ОШИБКА:', error);
-        res.status(500).json({
-            error: error.message,
-            stack: error.stack
-        });
-    }
-});
-
-// API endpoint для получения информации
-app.get('/api/info', (req, res) => {
-    const hasLogo = fs.existsSync('./templates/logo.png');
-
-    res.json({
-        status: 'online',
-        service: 'TUTHELP Word Generator',
-        version: '1.0.0',
-        settings: {
-            charsPerPage: CHARS_PER_PAGE,
-            hasLogo: hasLogo,
-            borderColor: '#9b6c4b'
-        },
-        endpoints: {
-            generate: '/api/generate-word (POST)',
-            info: '/api/info (GET)'
-        }
-    });
-});
-
-// Тестовый endpoint для генерации примера
-app.post('/api/generate-example', async (req, res) => {
-    try {
-        // Генерация примера текста
-        const exampleText = `
-LESSON 1: Present Simple vs Present Continuous
-═══════════════════════════════════════════
-
-Grammar Explanation:
-This section focuses on present simple vs present continuous. Complete the following exercises to practice this grammar point.
-
-EXERCISE A: Multiple Choice
-1. ______ to the party tonight?
-   a) Do you go
-   b) Are you going
-   c) Have you gone
-   d) Will you go
-
-2. She ______ coffee every morning.
-   a) drink
-   b) drinks
-   c) is drinking
-   d) has drunk
-
-EXERCISE B: Fill in the Blanks
-1. Look! It __________ (rain) outside.
-    Answer: ____________________
-
-2. Water __________ (boil) at 100 degrees Celsius.
-    Answer: ____________________
-
----
-        `;
-
-        const buffer = await generateWordDocument(exampleText, {
-            title: "Пример учебных материалов",
-            subject: "Английский язык"
-        });
-
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-        res.setHeader('Content-Disposition', 'attachment; filename=tuthelp_example.docx');
-        res.send(buffer);
-
-    } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// Главная страница с формой для тестирования
-app.get('/', (req, res) => {
-    const hasLogo = fs.existsSync('./templates/logo.png');
+// API info
+app.get('/api/info', (req, res) => {
+    res.json({
+        status: 'online',
+        version: '4.1.0',
+        features: [
+            'Задания не разрываются между страницами',
+            'Простая нумерация страниц (1, 2, 3...)',
+            'Коричневые заголовки',
+            'Два документа: задания и ответы'
+        ]
+    });
+});
 
+// Пример данных
+app.get('/api/example-data', (req, res) => {
+    const exampleData = {
+        "group_title": "Spider-Man Practice",
+        "tasks": [
+            {
+                "tool_id": 23,
+                "tool_name": "Create a Text",
+                "title": "Text: Spider-Man",
+                "instruction": "Read the text",
+                "task": {
+                    "type": "text-with-vocabulary",
+                    "text": "Spider-Man is a superhero from New York. He was bitten by a radioactive spider and gained amazing powers. He can climb walls and has a spider-sense that warns him of danger.",
+                    "vocabulary_used": ["superhero", "radioactive", "spider-sense"]
+                },
+                "answers": null
+            },
+            {
+                "tool_id": 3,
+                "tool_name": "Fill in the Gap",
+                "title": "Complete the Story",
+                "instruction": "Fill in the blanks",
+                "task": {
+                    "type": "fill-in-the-gap",
+                    "text": "Peter Parker was (1) ______ by his Aunt May. He was bitten by a (2) ______ spider. He gained (3) ______ powers.",
+                    "wordBank": ["raised", "radioactive", "amazing"]
+                },
+                "answers": ["1 raised", "2 radioactive", "3 amazing"]
+            }
+        ]
+    };
+    res.json(exampleData);
+});
+
+// Главная страница
+app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
         <html>
         <head>
-            <title>TUTHELP Word Генератор API</title>
+            <title>TUTHELP PDF Generator</title>
             <style>
-                body { font-family: 'Segoe UI', Arial; max-width: 1000px; margin: 40px auto; padding: 20px; }
-                h1 { color: #1F4E8C; }
-                h2 { color: #2E75B6; margin-top: 30px; }
-                .btn { 
-                    padding: 12px 30px; 
-                    background: #1F4E8C; 
-                    color: white; 
-                    border: none; 
-                    border-radius: 5px; 
-                    cursor: pointer; 
-                    font-size: 16px;
-                    margin: 5px;
-                }
-                .btn:hover { background: #2E75B6; }
-                .btn-secondary { background: #9b6c4b; }
-                .btn-secondary:hover { background: #7b5a3e; }
-                .success { color: green; }
-                .warning { color: orange; }
-                .stats { background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0; }
-                textarea { 
-                    width: 100%; 
-                    height: 200px; 
-                    padding: 10px; 
-                    font-family: monospace;
-                    border: 1px solid #ccc;
-                    border-radius: 5px;
-                }
-                input { 
-                    width: 100%; 
-                    padding: 8px; 
-                    margin: 5px 0 15px 0;
-                    border: 1px solid #ccc;
-                    border-radius: 3px;
-                }
-                .code-block {
-                    background: #2d2d2d;
-                    color: #f8f8f8;
-                    padding: 15px;
-                    border-radius: 5px;
-                    font-family: monospace;
-                    overflow-x: auto;
-                }
-                .endpoint {
-                    background: #e3f2fd;
-                    padding: 10px;
-                    border-left: 4px solid #1F4E8C;
-                    margin: 10px 0;
-                }
+                body { font-family: Arial; max-width: 800px; margin: 40px auto; padding: 20px; }
+                h1 { color: #9b6c4b; }
+                .btn { background: #9b6c4b; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; }
+                .info { background: #f5f5f5; padding: 20px; border-radius: 10px; }
+                .feature { color: #9b6c4b; margin: 5px 0; }
             </style>
         </head>
         <body>
-            <h1>📚 TUTHELP.ru - Генератор Word документов API</h1>
-            <p class="success">✅ Сервер работает</p>
-            
-            <div class="stats">
-                <h3>📊 Информация:</h3>
-                <p>📄 Символов на страницу: <strong>${CHARS_PER_PAGE}</strong></p>
-                <p>🖼️ Логотип: ${hasLogo ? '✅ Есть' : '❌ Отсутствует'}</p>
-                <p>🔗 API Endpoints:</p>
-                <ul>
-                    <li><strong>POST</strong> /api/generate-word - Основной генератор</li>
-                    <li><strong>GET</strong> /api/info - Информация о сервере</li>
-                    <li><strong>POST</strong> /api/generate-example - Сгенерировать пример</li>
-                </ul>
+            <h1>📚 TUTHELP PDF Generator v4.1</h1>
+            <div class="info">
+                <p>✅ Сервер работает</p>
+                <p class="feature">✓ Задания не разрываются между страницами</p>
+                <p class="feature">✓ Простая нумерация страниц (1, 2, 3...)</p>
+                <p class="feature">✓ Коричневые заголовки</p>
+                <p class="feature">✓ Два документа: задания и ответы</p>
             </div>
-
-            <h2>📝 Тестовая форма</h2>
-            <div class="endpoint">
-                <strong>POST /api/generate-word</strong> - Отправьте JSON с текстом
-            </div>
-            
-            <form id="generateForm">
-                <h3>Метаданные (опционально):</h3>
-                <label>Название документа:</label>
-                <input type="text" id="title" placeholder="TUTHELP Учебные материалы">
-                
-                <label>Тема:</label>
-                <input type="text" id="subject" placeholder="Английский язык">
-                
-                <label>Имя файла:</label>
-                <input type="text" id="filename" placeholder="tuthelp_materials.docx">
-                
-                <h3>Текст документа:</h3>
-                <textarea id="text" placeholder="Введите текст документа...">LESSON 1: Present Simple vs Present Continuous
-═══════════════════════════════════════════
-
-Grammar Explanation:
-This section focuses on present simple vs present continuous.
-
-EXERCISE A: Multiple Choice
-1. She ______ coffee every morning.
-   a) drink
-   b) drinks
-   c) is drinking
-   d) has drunk
-
-EXERCISE B: Fill in the Blanks
-1. Look! It __________ (rain) outside.
-    Answer: ____________________</textarea>
-                
-                <button type="submit" class="btn">📥 СГЕНЕРИРОВАТЬ</button>
-                <button type="button" class="btn btn-secondary" onclick="generateExample()">📋 СГЕНЕРИРОВАТЬ ПРИМЕР</button>
-            </form>
-
-            <h2>📦 Пример JSON запроса:</h2>
-            <div class="code-block">
-{
-  "text": "Текст вашего документа...",
-  "metadata": {
-    "title": "Название документа",
-    "subject": "Тема",
-    "description": "Описание"
-  },
-  "filename": "custom_filename.docx"
-}
-            </div>
-
+            <button class="btn" onclick="test()">📥 Тестовый запрос</button>
             <script>
-                document.getElementById('generateForm').addEventListener('submit', async (e) => {
-                    e.preventDefault();
+                async function test() {
+                    const res = await fetch('/api/example-data');
+                    const data = await res.json();
                     
-                    const btn = document.querySelector('.btn');
-                    btn.textContent = '⏳ Генерация...';
-                    btn.disabled = true;
+                    const response = await fetch('/api/generate-word', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(data)
+                    });
                     
-                    try {
-                        const response = await fetch('/api/generate-word', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                text: document.getElementById('text').value,
-                                metadata: {
-                                    title: document.getElementById('title').value,
-                                    subject: document.getElementById('subject').value
-                                },
-                                filename: document.getElementById('filename').value || undefined
-                            })
-                        });
-                        
-                        if (!response.ok) {
-                            throw new Error('Ошибка сервера');
-                        }
-                        
-                        const blob = await response.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = document.getElementById('filename').value || 'tuthelp_document.docx';
-                        a.click();
-                        
-                        btn.textContent = '✅ ГОТОВО! Сгенерировать ещё';
-                    } catch (error) {
-                        alert('Ошибка: ' + error.message);
-                        btn.textContent = '📥 СГЕНЕРИРОВАТЬ';
-                    } finally {
-                        btn.disabled = false;
-                    }
-                });
-
-                async function generateExample() {
-                    const btn = document.querySelector('.btn-secondary');
-                    btn.textContent = '⏳ Генерация...';
-                    btn.disabled = true;
-                    
-                    try {
-                        const response = await fetch('/api/generate-example', { method: 'POST' });
-                        const blob = await response.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'tuthelp_example.docx';
-                        a.click();
-                    } catch (error) {
-                        alert('Ошибка: ' + error.message);
-                    } finally {
-                        btn.textContent = '📋 СГЕНЕРИРОВАТЬ ПРИМЕР';
-                        btn.disabled = false;
-                    }
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'test.zip';
+                    a.click();
                 }
             </script>
-            
-            <div style="margin-top: 50px; padding-top: 20px; border-top: 2px solid #9b6c4b; text-align: center; color: #666;">
-                Документ создан с помощью платформы TUTHELP.ru
-            </div>
         </body>
         </html>
     `);
 });
 
-// Запуск сервера
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.clear();
     console.log('\n' + '='.repeat(60));
-    console.log('              ✅ TUTHELP ГЕНЕРАТОР ЗАПУЩЕН');
+    console.log('      ✅ TUTHELP PDF GENERATOR v4.1');
     console.log('='.repeat(60));
     console.log(`   🌐 http://localhost:${PORT}`);
-    console.log(`   📡 API: http://localhost:${PORT}/api`);
+    console.log(`   📡 API: POST /api/generate-word`);
     console.log('='.repeat(60));
-    console.log('\n📡 ДОСТУПНЫЕ ENDPOINTS:');
-    console.log('   POST /api/generate-word - Основной генератор');
-    console.log('   GET  /api/info         - Информация о сервере');
-    console.log('   POST /api/generate-example - Пример документа');
+    console.log('\n🎯 ОСОБЕННОСТИ:');
+    console.log('   • Задания не разрываются между страницами');
+    console.log('   • Простая нумерация страниц (1, 2, 3...)');
+    console.log('   • Коричневые заголовки');
     console.log('='.repeat(60));
 });
