@@ -11,111 +11,86 @@ app.use(express.json({ limit: '50mb' }));
 const CHARS_PER_PAGE = 2000;
 const BROWN_COLOR = "9b6c4b";
 
-// Разделяем текст на страницы с сохранением целостности заданий
+// ========== РАЗБИЕНИЕ НА СТРАНИЦЫ ==========
 function splitTextIntoPages(text) {
     if (!text || text.length === 0) return [];
 
     const pages = [];
-    let remainingText = text;
-    let pageCount = 0;
-
-    console.log('📄 Разбиение текста на страницы с сохранением заданий...');
-
-    // Разбиваем текст на блоки по заданиям (каждое задание начинается с "ЗАДАНИЕ")
-    const taskBlocks = text.split(/(?=ЗАДАНИЕ \d+)/);
-
     let currentPage = '';
 
+    console.log('📄 Разбиение текста на страницы...');
+
+    const taskBlocks = text.split(/(?=ЗАДАНИЕ \d+)/);
+
     taskBlocks.forEach(block => {
-        // Если блок пустой, пропускаем
         if (!block.trim()) return;
 
-        // Если текущая страница + новый блок не превышают лимит
         if ((currentPage.length + block.length) <= CHARS_PER_PAGE) {
             currentPage += block;
         } else {
-            // Если текущая страница не пустая, сохраняем её
             if (currentPage.trim()) {
                 pages.push(currentPage.trim());
-                console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
                 currentPage = '';
             }
 
-            // Если блок сам по себе больше страницы, разбиваем его принудительно
             if (block.length > CHARS_PER_PAGE) {
-                // Разбиваем большой блок на части
                 let remainingBlock = block;
                 while (remainingBlock.length > 0) {
                     if (remainingBlock.length <= CHARS_PER_PAGE) {
                         if (currentPage) {
                             pages.push(currentPage.trim());
-                            console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
                             currentPage = '';
                         }
                         pages.push(remainingBlock.trim());
-                        console.log(`   Страница ${pages.length}: ${remainingBlock.length} символов`);
                         break;
                     } else {
-                        // Ищем хорошее место для разрыва внутри блока
                         let chunk = remainingBlock.substring(0, CHARS_PER_PAGE);
                         let splitPoint = findSplitPoint(chunk);
 
                         const pageText = remainingBlock.substring(0, splitPoint).trim();
                         if (currentPage) {
                             pages.push(currentPage.trim());
-                            console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
                             currentPage = '';
                         }
                         pages.push(pageText);
-                        console.log(`   Страница ${pages.length}: ${pageText.length} символов`);
-
                         remainingBlock = remainingBlock.substring(splitPoint).trim();
                     }
                 }
             } else {
-                // Начинаем новую страницу с этого блока
                 currentPage = block;
             }
         }
     });
 
-    // Добавляем последнюю страницу
     if (currentPage.trim()) {
         pages.push(currentPage.trim());
-        console.log(`   Страница ${pages.length}: ${currentPage.length} символов`);
     }
 
-    console.log(`✅ Всего создано страниц: ${pages.length}`);
+    console.log(`✅ Создано страниц: ${pages.length}`);
     return pages;
 }
 
-// Поиск места для разрыва
 function findSplitPoint(chunk) {
     let splitPoint = -1;
 
-    // Ищем последнюю точку с запятой
     let lastSemicolon = chunk.lastIndexOf(';');
     if (lastSemicolon > CHARS_PER_PAGE * 0.5) splitPoint = lastSemicolon + 1;
 
-    // Ищем последнюю точку
     if (splitPoint === -1) {
         let lastPeriod = chunk.lastIndexOf('.');
         if (lastPeriod > CHARS_PER_PAGE * 0.5) splitPoint = lastPeriod + 1;
     }
 
-    // Ищем последний перевод строки
     if (splitPoint === -1) {
         let lastNewLine = chunk.lastIndexOf('\n');
         if (lastNewLine > CHARS_PER_PAGE * 0.5) splitPoint = lastNewLine + 1;
     }
 
-    // Ищем последний пробел
     if (splitPoint === -1) {
         let lastSpace = chunk.lastIndexOf(' ');
         if (lastSpace > CHARS_PER_PAGE * 0.5) splitPoint = lastSpace + 1;
     }
 
-    // Если ничего не нашли, режем по середине
     if (splitPoint === -1) {
         splitPoint = Math.floor(CHARS_PER_PAGE * 0.8);
     }
@@ -123,7 +98,7 @@ function findSplitPoint(chunk) {
     return splitPoint;
 }
 
-// Функция для создания колонтитулов - ПРОСТАЯ НУМЕРАЦИЯ
+// Функция для создания колонтитулов
 function createHeaderAndFooter(pageNumber, totalPages, docType = 'tasks') {
     const header = new Header({
         children: [
@@ -154,11 +129,25 @@ function createHeaderAndFooter(pageNumber, totalPages, docType = 'tasks') {
     });
 
     const footerText = docType === 'tasks'
-        ? 'Документ с заданиями создан с помощью платформы TUTHELP.ru'
-        : 'Документ с ответами создан с помощью платформы TUTHELP.ru';
+        ? 'Документ с заданиями создан с помощью платформы TUT-HELP.ru'
+        : 'Документ с ответами создан с помощью платформы TUT-HELP.ru';
 
     const footer = new Footer({
         children: [
+            // Первый параграф - текст по центру
+            new Paragraph({
+                children: [
+                    new TextRun({
+                        text: footerText,
+                        bold: false,
+                        size: 20,
+                        color: "666666",
+                    }),
+                ],
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 60, after: 20 },
+            }),
+            // Второй параграф - номер страницы по центру
             new Paragraph({
                 children: [
                     new TextRun({
@@ -167,14 +156,8 @@ function createHeaderAndFooter(pageNumber, totalPages, docType = 'tasks') {
                         size: 24,
                         color: BROWN_COLOR,
                     }),
-                    new TextRun({
-                        text: `\t\t\t\t\t\t\t\t${footerText}`,
-                        bold: false,
-                        size: 20,
-                        color: "666666",
-                    }),
                 ],
-                alignment: AlignmentType.LEFT,
+                alignment: AlignmentType.CENTER,
                 border: {
                     top: {
                         color: BROWN_COLOR,
@@ -183,7 +166,7 @@ function createHeaderAndFooter(pageNumber, totalPages, docType = 'tasks') {
                         size: 2,
                     }
                 },
-                spacing: { before: 120 },
+                spacing: { before: 20, after: 60 },
             }),
         ],
     });
@@ -191,8 +174,46 @@ function createHeaderAndFooter(pageNumber, totalPages, docType = 'tasks') {
     return { header, footer };
 }
 
+// ========== ФУНКЦИИ ДЛЯ ФОРМАТИРОВАНИЯ РАЗНЫХ ТИПОВ ЗАДАНИЙ ==========
+
+// Tool 1: Word-Image Matching
+function formatTool1(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nСОЕДИНИТЕ КАРТИНКИ СО СЛОВАМИ:\n\n`;
+
+    const images = task.task?.images || [];
+    images.forEach(img => {
+        taskText += `[Изображение ${img.number}]\n`;
+    });
+
+    const wordBank = task.task?.wordBank || [];
+    if (wordBank.length > 0) {
+        taskText += `\nБанк слов:\n`;
+        wordBank.forEach((word, i) => {
+            taskText += `   ${String.fromCharCode(97 + i)}. ${word}\n`;
+        });
+    }
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ОТВЕТЫ:\n`;
+        task.answers.forEach(answer => {
+            taskText += `   • ${answer}\n`;
+        });
+    } else {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `Напишите соответствия: ____________________\n`;
+    }
+
+    return taskText;
+}
+
 // Tool 3: Fill in the Gap
-function formatFillGap(task, index, includeAnswers = false) {
+function formatTool3(task, index, includeAnswers = false) {
     let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
     if (task.title) taskText += `: ${task.title}`;
     taskText += `\n${'═'.repeat(50)}\n`;
@@ -204,7 +225,6 @@ function formatFillGap(task, index, includeAnswers = false) {
     const text = task.task?.text || '';
 
     if (includeAnswers && task.answers) {
-        // Заполняем пропуски ответами
         let filledText = text;
         if (Array.isArray(task.answers)) {
             task.answers.forEach(answer => {
@@ -212,9 +232,9 @@ function formatFillGap(task, index, includeAnswers = false) {
                 if (match) {
                     const number = match[1];
                     const correctAnswer = match[2];
-                    const pattern = `(${number}) ______`;
+                    const pattern = `\\(${number}\\) ______`;
                     const replacement = `(${number}) ${correctAnswer}`;
-                    filledText = filledText.replace(new RegExp(pattern, 'g'), replacement);
+                    filledText = filledText.replace(new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), replacement);
                 }
             });
         }
@@ -223,7 +243,6 @@ function formatFillGap(task, index, includeAnswers = false) {
         taskText += `${text}\n`;
     }
 
-    // Банк слов
     const wordBank = task.task?.wordBank || [];
     if (wordBank.length > 0) {
         taskText += `\nБанк слов:\n`;
@@ -245,8 +264,99 @@ function formatFillGap(task, index, includeAnswers = false) {
     return taskText;
 }
 
+// Tool 8: Discussion Questions
+function formatTool8(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nВОПРОСЫ ДЛЯ ОБСУЖДЕНИЯ:\n\n`;
+
+    const questions = task.task?.questions || [];
+    questions.forEach((q, i) => {
+        if (typeof q === 'object') {
+            taskText += `${q.number || i + 1}. ${q.question}\n`;
+            if (q.highlightedWords && q.highlightedWords.length > 0) {
+                taskText += `   Ключевые слова: ${q.highlightedWords.join(', ')}\n`;
+            }
+            taskText += `\n`;
+        } else {
+            taskText += `${i + 1}. ${q}\n\n`;
+        }
+    });
+
+    return taskText;
+}
+
+// Tool 10: Word-Definition Matching
+function formatTool10(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nСОЕДИНИТЕ СЛОВА С ОПРЕДЕЛЕНИЯМИ:\n\n`;
+
+    const words = task.task?.words || [];
+    const definitions = task.task?.definitions_shuffled || [];
+
+    taskText += `СЛОВА:\n`;
+    words.forEach((word, i) => {
+        taskText += `   ${i + 1}. ${word}\n`;
+    });
+
+    taskText += `\nОПРЕДЕЛЕНИЯ:\n`;
+    definitions.forEach((def, i) => {
+        taskText += `   ${String.fromCharCode(97 + i)}. ${def}\n`;
+    });
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ОТВЕТЫ:\n`;
+        task.answers.forEach(answer => {
+            taskText += `   • ${answer}\n`;
+        });
+    } else {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `Напишите соответствия (например: 1-a, 2-b): ____________________\n`;
+    }
+
+    return taskText;
+}
+
+// Tool 15: Simplify or Update Text
+function formatTool15(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nОРИГИНАЛЬНЫЙ ТЕКСТ:\n`;
+    taskText += `${task.task?.original_text || ''}\n`;
+
+    if (includeAnswers) {
+        taskText += `\n✅ УПРОЩЕННЫЙ ТЕКСТ:\n`;
+        taskText += `${task.task?.simplified_text || ''}\n`;
+
+        if (task.answers?.metadata) {
+            taskText += `\n📊 СТАТИСТИКА:\n`;
+            task.answers.metadata.forEach(item => {
+                taskText += `   • ${item}\n`;
+            });
+        }
+    } else {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `Упростите текст: ____________________\n`;
+    }
+
+    return taskText;
+}
+
 // Tool 17: Interesting Facts
-function formatInterestingFacts(task, index, includeAnswers = false) {
+function formatTool17(task, index, includeAnswers = false) {
     let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
     if (task.title) taskText += `: ${task.title}`;
     taskText += `\n${'═'.repeat(50)}\n`;
@@ -263,8 +373,73 @@ function formatInterestingFacts(task, index, includeAnswers = false) {
     return taskText;
 }
 
+// Tool 19: Matching Halves
+function formatTool19(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nСОЕДИНИТЕ ЧАСТИ ПРЕДЛОЖЕНИЙ:\n\n`;
+
+    const left = task.task?.left || [];
+    const right = task.task?.right || [];
+
+    taskText += `ЛЕВАЯ ЧАСТЬ:\n`;
+    left.forEach(item => taskText += `${item}\n`);
+
+    taskText += `\nПРАВАЯ ЧАСТЬ:\n`;
+    right.forEach(item => taskText += `${item}\n`);
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ПРАВИЛЬНЫЕ ПАРЫ:\n`;
+        task.answers.forEach(answer => {
+            taskText += `   • ${answer}\n`;
+        });
+    } else {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `Напишите соответствия (например: 1-a, 2-b): ____________________\n`;
+    }
+
+    return taskText;
+}
+
+// Tool 21: Rephrase Using the Word Given
+function formatTool21(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
+
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
+
+    taskText += `\nПЕРЕФРАЗИРУЙТЕ, ИСПОЛЬЗУЯ ДАННОЕ СЛОВО:\n\n`;
+
+    const sentences = task.task?.sentences || [];
+    sentences.forEach((item, i) => {
+        taskText += `${item.number || i + 1}. Оригинал: ${item.original || ''}\n`;
+        taskText += `   Ключевое слово: ${item.keyword || ''}\n`;
+        if (!includeAnswers) {
+            taskText += `   ${item.blank || ''}\n`;
+        }
+        taskText += `\n`;
+    });
+
+    if (includeAnswers && task.answers) {
+        taskText += `\n✅ ОТВЕТЫ:\n`;
+        task.answers.forEach(answer => {
+            taskText += `   • ${answer}\n`;
+        });
+    } else if (!includeAnswers) {
+        taskText += `\n${'─'.repeat(40)}\n`;
+        taskText += `ОТВЕТ: ____________________\n`;
+    }
+
+    return taskText;
+}
+
 // Tool 23: Text with Vocabulary
-function formatTextWithVocabulary(task, index, includeAnswers = false) {
+function formatTool23(task, index, includeAnswers = false) {
     let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
     if (task.title) taskText += `: ${task.title}`;
     taskText += `\n${'═'.repeat(50)}\n`;
@@ -285,51 +460,19 @@ function formatTextWithVocabulary(task, index, includeAnswers = false) {
     return taskText;
 }
 
-// Tool 19: Matching Halves
-function formatMatchingHalves(task, index, includeAnswers = false) {
-    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
-    if (task.title) taskText += `: ${task.title}`;
-    taskText += `\n${'═'.repeat(50)}\n`;
-
-    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
-
-    taskText += `\nЗАДАНИЕ:\n\n`;
-
-    const left = task.task?.left || [];
-    const right = task.task?.right || [];
-
-    taskText += `ЛЕВАЯ ЧАСТЬ:\n`;
-    left.forEach(item => taskText += `${item}\n`);
-
-    taskText += `\nПРАВАЯ ЧАСТЬ:\n`;
-    right.forEach(item => taskText += `${item}\n`);
-
-    if (includeAnswers && task.answers) {
-        taskText += `\n✅ ПРАВИЛЬНЫЕ ПАРЫ:\n`;
-        task.answers.forEach(answer => {
-            taskText += `   • ${answer}\n`;
-        });
-    } else {
-        taskText += `\n${'─'.repeat(40)}\n`;
-        taskText += `ОТВЕТ: ____________________\n`;
-    }
-
-    return taskText;
-}
-
 // Tool 24: Scramble Sentences
-function formatScrambleSentences(task, index, includeAnswers = false) {
+function formatTool24(task, index, includeAnswers = false) {
     let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
     if (task.title) taskText += `: ${task.title}`;
     taskText += `\n${'═'.repeat(50)}\n`;
 
     if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
 
-    taskText += `\nЗАДАНИЕ: Составьте предложения из слов\n\n`;
+    taskText += `\nСОСТАВЬТЕ ПРЕДЛОЖЕНИЯ ИЗ СЛОВ:\n\n`;
 
     const scrambled = task.task?.scrambled || [];
     scrambled.forEach((sentence, i) => {
-        taskText += `${sentence}\n\n`;
+        taskText += `${i + 1}. ${sentence}\n\n`;
     });
 
     if (includeAnswers && task.answers) {
@@ -345,32 +488,55 @@ function formatScrambleSentences(task, index, includeAnswers = false) {
     return taskText;
 }
 
-// Универсальная функция форматирования задания по tool_id
-function formatTaskByTool(task, index, includeAnswers = false) {
-    const toolId = task.tool_id;
+// Tool 26: Extract Vocabulary
+function formatTool26(task, index, includeAnswers = false) {
+    let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
+    if (task.title) taskText += `: ${task.title}`;
+    taskText += `\n${'═'.repeat(50)}\n`;
 
-    switch (toolId) {
-        case 3: // Fill in the Gap
-            return formatFillGap(task, index, includeAnswers);
+    if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
 
-        case 17: // Interesting Facts
-            return formatInterestingFacts(task, index, includeAnswers);
-
-        case 19: // Matching Halves
-            return formatMatchingHalves(task, index, includeAnswers);
-
-        case 23: // Text with Vocabulary
-            return formatTextWithVocabulary(task, index, includeAnswers);
-
-        case 24: // Scramble Sentences
-            return formatScrambleSentences(task, index, includeAnswers);
-
-        default:
-            return formatGenericTask(task, index, includeAnswers);
+    const sourceText = task.task?.source_text || task.task?.text || '';
+    if (sourceText) {
+        taskText += `\nИСХОДНЫЙ ТЕКСТ:\n`;
+        taskText += `${sourceText}\n`;
     }
+
+    const extractedWords = task.task?.extracted_words || [];
+    if (extractedWords.length > 0) {
+        taskText += `\n📚 ВЫДЕЛЕННАЯ ЛЕКСИКА:\n\n`;
+
+        extractedWords.forEach((item, i) => {
+            if (typeof item === 'object') {
+                taskText += `${i + 1}. ${item.word || ''}\n`;
+                if (item.definition) taskText += `   Значение: ${item.definition}\n`;
+                if (item.context) taskText += `   Контекст: "${item.context}"\n`;
+                taskText += `\n`;
+            } else if (typeof item === 'string') {
+                const parts = item.split(' - ');
+                const word = parts[0];
+                const rest = parts[1] || '';
+
+                const contextMatch = rest.match(/^(.*?)\. Context: (.*)$/);
+
+                if (contextMatch) {
+                    const definition = contextMatch[1];
+                    const context = contextMatch[2];
+
+                    taskText += `${i + 1}. ${word}\n`;
+                    taskText += `   Значение: ${definition}\n`;
+                    taskText += `   Контекст: "${context}"\n\n`;
+                } else {
+                    taskText += `${i + 1}. ${item}\n\n`;
+                }
+            }
+        });
+    }
+
+    return taskText;
 }
 
-// Универсальный формат для неизвестных типов
+// Универсальная функция для неизвестных типов
 function formatGenericTask(task, index, includeAnswers = false) {
     let taskText = `\n\nЗАДАНИЕ ${index + 1}`;
     if (task.title) taskText += `: ${task.title}`;
@@ -378,17 +544,56 @@ function formatGenericTask(task, index, includeAnswers = false) {
 
     if (task.instruction) taskText += `\nИНСТРУКЦИЯ:\n${task.instruction}\n`;
 
-    taskText += `\nЗАДАНИЕ:\n`;
-    taskText += `${JSON.stringify(task.task, null, 2)}\n`;
+    if (task.task) {
+        if (typeof task.task === 'object') {
+            const possibleTextFields = ['text', 'source_text', 'original_text', 'description', 'content'];
+            let textFound = false;
+
+            for (const field of possibleTextFields) {
+                if (task.task[field] && typeof task.task[field] === 'string') {
+                    taskText += `\nТЕКСТ:\n${task.task[field]}\n`;
+                    textFound = true;
+                    break;
+                }
+            }
+
+            if (task.task.extracted_words && Array.isArray(task.task.extracted_words)) {
+                taskText += `\n📚 ВЫДЕЛЕННАЯ ЛЕКСИКА:\n\n`;
+                task.task.extracted_words.forEach((item, i) => {
+                    if (typeof item === 'string') {
+                        taskText += `${i + 1}. ${item}\n\n`;
+                    } else if (typeof item === 'object') {
+                        taskText += `${i + 1}. ${JSON.stringify(item)}\n\n`;
+                    }
+                });
+            }
+
+            if (!textFound && Object.keys(task.task).length > 0) {
+                taskText += `\nДАННЫЕ ЗАДАНИЯ:\n`;
+                taskText += `${JSON.stringify(task.task, null, 2)}\n`;
+            }
+        } else if (typeof task.task === 'string') {
+            taskText += `\nТЕКСТ:\n${task.task}\n`;
+        }
+    }
 
     if (includeAnswers && task.answers) {
         taskText += `\n✅ ОТВЕТЫ:\n`;
         if (Array.isArray(task.answers)) {
             task.answers.forEach(answer => {
-                taskText += `   • ${answer}\n`;
+                if (typeof answer === 'object') {
+                    taskText += `   • ${JSON.stringify(answer)}\n`;
+                } else {
+                    taskText += `   • ${answer}\n`;
+                }
             });
-        } else {
-            taskText += `   ${JSON.stringify(task.answers)}\n`;
+        } else if (typeof task.answers === 'object') {
+            taskText += `   ${JSON.stringify(task.answers, null, 2)}\n`;
+        }
+    } else if (!includeAnswers && task.tool_id === 26) {
+        if (!task.task?.extracted_words) {
+            taskText += `\n${'─'.repeat(40)}\n`;
+            taskText += `Изучите лексику из текста\n`;
         }
     } else if (!includeAnswers) {
         taskText += `\n${'─'.repeat(40)}\n`;
@@ -398,17 +603,35 @@ function formatGenericTask(task, index, includeAnswers = false) {
     return taskText;
 }
 
+// Главная функция форматирования по tool_id
+function formatTaskByTool(task, index, includeAnswers = false) {
+    const toolId = task.tool_id;
+
+    switch (toolId) {
+        case 1: return formatTool1(task, index, includeAnswers);
+        case 3: return formatTool3(task, index, includeAnswers);
+        case 8: return formatTool8(task, index, includeAnswers);
+        case 10: return formatTool10(task, index, includeAnswers);
+        case 15: return formatTool15(task, index, includeAnswers);
+        case 17: return formatTool17(task, index, includeAnswers);
+        case 19: return formatTool19(task, index, includeAnswers);
+        case 21: return formatTool21(task, index, includeAnswers);
+        case 23: return formatTool23(task, index, includeAnswers);
+        case 24: return formatTool24(task, index, includeAnswers);
+        case 26: return formatTool26(task, index, includeAnswers);
+        default: return formatGenericTask(task, index, includeAnswers);
+    }
+}
+
 // Генерация текста для документа с заданиями
 function generateTasksText(data) {
     let fullText = '';
 
-    // Заголовок группы
     if (data.group_title) {
         fullText += `${data.group_title}\n`;
         fullText += `${'═'.repeat(data.group_title.length)}\n\n`;
     }
 
-    // Задания
     if (data.tasks && Array.isArray(data.tasks)) {
         data.tasks.forEach((task, index) => {
             fullText += formatTaskByTool(task, index, false);
@@ -425,13 +648,11 @@ function generateTasksText(data) {
 function generateAnswersText(data) {
     let fullText = '';
 
-    // Заголовок группы
     if (data.group_title) {
         fullText += `${data.group_title} - ОТВЕТЫ\n`;
         fullText += `${'═'.repeat(data.group_title.length + 8)}\n\n`;
     }
 
-    // Задания с ответами
     if (data.tasks && Array.isArray(data.tasks)) {
         data.tasks.forEach((task, index) => {
             fullText += formatTaskByTool(task, index, true);
@@ -532,7 +753,11 @@ function textToParagraphs(text, isAnswers = false) {
 
         // Специальные заголовки
         if (line.includes('ИНТЕРЕСНЫЕ ФАКТЫ:') || line.includes('📖 ИСПОЛЬЗУЕМАЯ ЛЕКСИКА:') ||
-            line.includes('ЛЕВАЯ ЧАСТЬ:') || line.includes('ПРАВАЯ ЧАСТЬ:')) {
+            line.includes('ЛЕВАЯ ЧАСТЬ:') || line.includes('ПРАВАЯ ЧАСТЬ:') ||
+            line.includes('ВОПРОСЫ ДЛЯ ОБСУЖДЕНИЯ:') || line.includes('ИСХОДНЫЙ ТЕКСТ:') ||
+            line.includes('ОРИГИНАЛЬНЫЙ ТЕКСТ:') || line.includes('СОЕДИНИТЕ КАРТИНКИ СО СЛОВАМИ:') ||
+            line.includes('📊 СТАТИСТИКА:') || line.includes('ПЕРЕФРАЗИРУЙТЕ, ИСПОЛЬЗУЯ ДАННОЕ СЛОВО:') ||
+            line.includes('СОЕДИНИТЕ СЛОВА С ОПРЕДЕЛЕНИЯМИ:')) {
             return new Paragraph({
                 children: [new TextRun({
                     text: line,
@@ -569,8 +794,20 @@ function textToParagraphs(text, isAnswers = false) {
             });
         }
 
+        // Буквенные пункты (a., b., c.)
+        if (line.match(/^\s*[a-z]\./)) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    size: 24,
+                })],
+                indent: { left: 360 },
+                spacing: { before: 20, after: 20 },
+            });
+        }
+
         // Ответы с буллетами
-        if (line.trim().startsWith('•')) {
+        if (line.trim().startsWith('•') || line.trim().startsWith('   •')) {
             return new Paragraph({
                 children: [new TextRun({
                     text: line,
@@ -595,7 +832,8 @@ function textToParagraphs(text, isAnswers = false) {
         }
 
         // Место для ответа
-        if (line.includes('ОТВЕТ: ____________________') && !isAnswers) {
+        if ((line.includes('ОТВЕТ: ____________________') ||
+            line.includes('Напишите соответствия:')) && !isAnswers) {
             return new Paragraph({
                 children: [new TextRun({
                     text: line,
@@ -605,6 +843,48 @@ function textToParagraphs(text, isAnswers = false) {
                 })],
                 spacing: { before: 30, after: 30 },
                 indent: { left: 360 },
+            });
+        }
+
+        // [Изображение X] - плейсхолдер для картинок
+        if (line.includes('[Изображение')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    size: 24,
+                    color: "666666",
+                    italics: true,
+                })],
+                spacing: { before: 30, after: 30 },
+                alignment: AlignmentType.CENTER,
+            });
+        }
+
+        // Ключевые слова
+        if (line.includes('Ключевые слова:')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    size: 22,
+                    color: "888888",
+                    italics: true,
+                })],
+                indent: { left: 720 },
+                spacing: { before: 5, after: 15 },
+            });
+        }
+
+        // Значение и контекст
+        if (line.includes('Значение:') || line.includes('Контекст:') ||
+            line.includes('Оригинал:') || line.includes('Ключевое слово:')) {
+            return new Paragraph({
+                children: [new TextRun({
+                    text: line,
+                    size: 22,
+                    color: "666666",
+                })],
+                indent: { left: 720 },
+                spacing: { before: 5, after: 5 },
             });
         }
 
@@ -664,7 +944,7 @@ async function generateWordDocument(text, title, docType = 'tasks') {
         properties: {
             title: title,
             subject: "Английский язык",
-            creator: "TUTHELP.ru",
+            creator: "TUT-HELP.ru",
         },
     });
 
@@ -679,20 +959,12 @@ async function createZipWithDocuments(tasksBuffer, answersBuffer) {
     return await zip.generateAsync({ type: "nodebuffer" });
 }
 
-// API endpoint
-app.post('/api/generate-word', async (req, res) => {
+// ========== ОСНОВНОЙ ЭНДПОИНТ ==========
+app.post('/api/pdf/generate', async (req, res) => {
     try {
-        console.log('\n📄 НАЧАЛО ГЕНЕРАЦИИ ДВУХ ДОКУМЕНТОВ');
-        console.log('='.repeat(60));
+        console.log('\n📄 ===== НАЧАЛО ГЕНЕРАЦИИ =====');
 
         const jsonData = req.body;
-
-        if (!jsonData) {
-            return res.status(400).json({
-                error: 'Данные не предоставлены',
-                message: 'Пожалуйста, отправьте JSON с заданиями'
-            });
-        }
 
         console.log(`📋 Группа: ${jsonData.group_title || 'Без названия'}`);
         console.log(`📊 Заданий: ${jsonData.tasks?.length || 0}`);
@@ -701,7 +973,7 @@ app.post('/api/generate-word', async (req, res) => {
         const tasksText = generateTasksText(jsonData);
         const answersText = generateAnswersText(jsonData);
 
-        // Генерация документов
+        // Генерация Word документов
         const tasksBuffer = await generateWordDocument(
             tasksText,
             jsonData.group_title || "Задания",
@@ -714,14 +986,85 @@ app.post('/api/generate-word', async (req, res) => {
             'answers'
         );
 
-        // Сохранение
-        if (!fs.existsSync('./output')) fs.mkdirSync('./output');
+        // 📁 СОЗДАЕМ ПАПКУ output ЕСЛИ ЕЁ НЕТ
+        const outputDir = path.join(__dirname, 'output');
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir);
+            console.log('📁 Создана папка output');
+        }
 
+        // 💾 СОХРАНЯЕМ ФАЙЛЫ
         const timestamp = Date.now();
-        fs.writeFileSync(`./output/tasks_${timestamp}.docx`, tasksBuffer);
-        fs.writeFileSync(`./output/answers_${timestamp}.docx`, answersBuffer);
+        const tasksPath = path.join(outputDir, `tasks_${timestamp}.docx`);
+        const answersPath = path.join(outputDir, `answers_${timestamp}.docx`);
 
-        // ZIP
+        fs.writeFileSync(tasksPath, tasksBuffer);
+        fs.writeFileSync(answersPath, answersBuffer);
+
+        console.log(`💾 Сохранено:\n   📄 ${tasksPath}\n   📄 ${answersPath}`);
+
+        // 📦 СОЗДАЕМ ZIP ДЛЯ ОТПРАВКИ
+        const zipBuffer = await createZipWithDocuments(tasksBuffer, answersBuffer);
+
+        const filename = `tasks_${timestamp}.zip`;
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+
+        console.log(`📤 Отправка ZIP (${zipBuffer.length} байт)...`);
+        res.send(zipBuffer);
+
+    } catch (error) {
+        console.error('❌ ОШИБКА:', error);
+        res.status(500).json({
+            error: error.message,
+            stack: error.stack
+        });
+    }
+});
+
+// Старый эндпоинт для обратной совместимости
+app.post('/api/generate-word', async (req, res) => {
+    try {
+        console.log('\n📄 НАЧАЛО ГЕНЕРАЦИИ (старый эндпоинт)');
+
+        const jsonData = req.body;
+
+        console.log(`📋 Группа: ${jsonData.group_title || 'Без названия'}`);
+        console.log(`📊 Заданий: ${jsonData.tasks?.length || 0}`);
+
+        const tasksText = generateTasksText(jsonData);
+        const answersText = generateAnswersText(jsonData);
+
+        const tasksBuffer = await generateWordDocument(
+            tasksText,
+            jsonData.group_title || "Задания",
+            'tasks'
+        );
+
+        const answersBuffer = await generateWordDocument(
+            answersText,
+            `${jsonData.group_title || "Задания"} - ОТВЕТЫ`,
+            'answers'
+        );
+
+        // 📁 СОЗДАЕМ ПАПКУ output ЕСЛИ ЕЁ НЕТ
+        const outputDir = path.join(__dirname, 'output');
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir);
+        }
+
+        // 💾 СОХРАНЯЕМ ФАЙЛЫ
+        const timestamp = Date.now();
+        const tasksPath = path.join(outputDir, `tasks_${timestamp}.docx`);
+        const answersPath = path.join(outputDir, `answers_${timestamp}.docx`);
+
+        fs.writeFileSync(tasksPath, tasksBuffer);
+        fs.writeFileSync(answersPath, answersBuffer);
+
+        console.log(`💾 Сохранено:\n   📄 ${tasksPath}\n   📄 ${answersPath}`);
+
+        // 📦 СОЗДАЕМ ZIP ДЛЯ ОТПРАВКИ
         const zipBuffer = await createZipWithDocuments(tasksBuffer, answersBuffer);
 
         res.setHeader('Content-Type', 'application/zip');
@@ -738,48 +1081,36 @@ app.post('/api/generate-word', async (req, res) => {
 app.get('/api/info', (req, res) => {
     res.json({
         status: 'online',
-        version: '4.1.0',
+        version: '4.4.0',
         features: [
             'Задания не разрываются между страницами',
             'Простая нумерация страниц (1, 2, 3...)',
             'Коричневые заголовки',
-            'Два документа: задания и ответы'
-        ]
+            'Два документа: задания и ответы',
+            'Поддержка 10 типов заданий',
+            'Умное извлечение текста из разных полей',
+            'Поддержка highlighted words',
+            'Статистика в Simplify Text'
+        ],
+        supported_tools: [1, 3, 8, 10, 15, 17, 19, 21, 23, 24, 26],
+        endpoints: {
+            generate: 'POST /api/pdf/generate',
+            old_generate: 'POST /api/generate-word',
+            info: 'GET /api/info'
+        }
     });
 });
 
-// Пример данных
-app.get('/api/example-data', (req, res) => {
-    const exampleData = {
-        "group_title": "Spider-Man Practice",
-        "tasks": [
-            {
-                "tool_id": 23,
-                "tool_name": "Create a Text",
-                "title": "Text: Spider-Man",
-                "instruction": "Read the text",
-                "task": {
-                    "type": "text-with-vocabulary",
-                    "text": "Spider-Man is a superhero from New York. He was bitten by a radioactive spider and gained amazing powers. He can climb walls and has a spider-sense that warns him of danger.",
-                    "vocabulary_used": ["superhero", "radioactive", "spider-sense"]
-                },
-                "answers": null
-            },
-            {
-                "tool_id": 3,
-                "tool_name": "Fill in the Gap",
-                "title": "Complete the Story",
-                "instruction": "Fill in the blanks",
-                "task": {
-                    "type": "fill-in-the-gap",
-                    "text": "Peter Parker was (1) ______ by his Aunt May. He was bitten by a (2) ______ spider. He gained (3) ______ powers.",
-                    "wordBank": ["raised", "radioactive", "amazing"]
-                },
-                "answers": ["1 raised", "2 radioactive", "3 amazing"]
-            }
-        ]
-    };
-    res.json(exampleData);
+// Тестовый эндпоинт
+app.post('/api/pdf/test', (req, res) => {
+    res.json({
+        message: 'PDF service is running',
+        receivedBody: req.body,
+        endpoints: {
+            generate: 'POST /api/pdf/generate',
+            info: 'GET /api/info'
+        }
+    });
 });
 
 // Главная страница
@@ -793,37 +1124,47 @@ app.get('/', (req, res) => {
                 body { font-family: Arial; max-width: 800px; margin: 40px auto; padding: 20px; }
                 h1 { color: #9b6c4b; }
                 .btn { background: #9b6c4b; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; }
+                .btn:hover { background: #7b4c3b; }
                 .info { background: #f5f5f5; padding: 20px; border-radius: 10px; }
                 .feature { color: #9b6c4b; margin: 5px 0; }
+                .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+                .tool-tag { background: #e0e0e0; padding: 5px 10px; border-radius: 15px; text-align: center; font-size: 14px; }
             </style>
         </head>
         <body>
-            <h1>📚 TUTHELP PDF Generator v4.1</h1>
+            <h1>📚 TUTHELP PDF Generator v4.4</h1>
             <div class="info">
                 <p>✅ Сервер работает</p>
                 <p class="feature">✓ Задания не разрываются между страницами</p>
                 <p class="feature">✓ Простая нумерация страниц (1, 2, 3...)</p>
                 <p class="feature">✓ Коричневые заголовки</p>
                 <p class="feature">✓ Два документа: задания и ответы</p>
+                <p class="feature">✓ Поддержка 11 типов заданий</p>
+                
+                <div class="tools">
+                    <span class="tool-tag">Tool 1: Image-Word</span>
+                    <span class="tool-tag">Tool 3: Fill Gap</span>
+                    <span class="tool-tag">Tool 8: Discussion</span>
+                    <span class="tool-tag">Tool 10: Word-Def</span>
+                    <span class="tool-tag">Tool 15: Simplify</span>
+                    <span class="tool-tag">Tool 17: Facts</span>
+                    <span class="tool-tag">Tool 19: Matching</span>
+                    <span class="tool-tag">Tool 21: Rephrase</span>
+                    <span class="tool-tag">Tool 23: Text+Voca</span>
+                    <span class="tool-tag">Tool 24: Scramble</span>
+                    <span class="tool-tag">Tool 26: Extract</span>
+                </div>
             </div>
             <button class="btn" onclick="test()">📥 Тестовый запрос</button>
             <script>
                 async function test() {
-                    const res = await fetch('/api/example-data');
-                    const data = await res.json();
-                    
-                    const response = await fetch('/api/generate-word', {
+                    const res = await fetch('/api/pdf/test', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(data)
+                        body: JSON.stringify({test: true})
                     });
-                    
-                    const blob = await response.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'test.zip';
-                    a.click();
+                    const data = await res.json();
+                    alert('✅ Сервер работает!\n' + JSON.stringify(data, null, 2));
                 }
             </script>
         </body>
@@ -831,18 +1172,16 @@ app.get('/', (req, res) => {
     `);
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.clear();
     console.log('\n' + '='.repeat(60));
-    console.log('      ✅ TUTHELP PDF GENERATOR v4.1');
+    console.log('      ✅ TUTHELP PDF GENERATOR v4.4');
     console.log('='.repeat(60));
     console.log(`   🌐 http://localhost:${PORT}`);
-    console.log(`   📡 API: POST /api/generate-word`);
+    console.log(`   📡 POST /api/pdf/generate - основной эндпоинт`);
+    console.log(`   📡 POST /api/generate-word - старый эндпоинт`);
     console.log('='.repeat(60));
-    console.log('\n🎯 ОСОБЕННОСТИ:');
-    console.log('   • Задания не разрываются между страницами');
-    console.log('   • Простая нумерация страниц (1, 2, 3...)');
-    console.log('   • Коричневые заголовки');
+    console.log('\n📁 Файлы сохраняются в папку /output');
     console.log('='.repeat(60));
 });
