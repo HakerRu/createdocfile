@@ -1,7 +1,15 @@
 {
+  "name": "tuthelp-createpdf",
+  "version": "4.4.0",
+  "description": "PDF generation service for TUT-HELP platform",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
   "dependencies": {
-    "docx": "^7.8.2",
-    "express": "^5.2.1",
+    "docx": "^8.5.0",
+    "express": "^4.22.1",
     "jszip": "^3.10.1"
   }
 }
